@@ -10,3 +10,6 @@ pypirc.txt
 dist/
 **/__pycache__/
 **/.pytest_cache/
+respogui-*/
+respogui-*.tar.gz
+respogui-*.zip
