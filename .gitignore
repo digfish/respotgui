@@ -1,0 +1,12 @@
+.vscode/
+.idea/
+.templates/
+*.js
+*.bin
+build/
+*.egg-info/
+*.egg
+pypirc.txt
+dist/
+**/__pycache__/
+**/.pytest_cache/
