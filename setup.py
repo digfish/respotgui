@@ -69,6 +69,6 @@ if __name__ == '__main__':
 #            ]
         },
         include_package_data=True,
-        package_data={'img':['*']},
+        package_data={'respot':['img/no-music.png']},
         install_requires=['PySimpleGUI', 'websocket-client', 'requests', 'Pillow']
     )
