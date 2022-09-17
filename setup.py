@@ -2,6 +2,7 @@ import subprocess
 import os,sys
 import setuptools
 import versioneer
+import configparser
 
 
 def increment_version(current_version):
@@ -23,6 +24,8 @@ def store_version(last_version):
 
 if __name__ == '__main__':
 
+    cfg = configparser.ConfigParser()
+    cfg.read('setup.cfg')
     current_directory = os.path.dirname(os.path.abspath(__file__))
     try:
         with open(os.path.join(current_directory, 'README.md'), encoding='utf-8') as f:
@@ -36,7 +39,7 @@ if __name__ == '__main__':
     """
     setuptools.setup(
         name='respotgui',
-        version='0.1.28',
+        version=cfg['bumpversion']['current_version'],
 #        version=open('VERSION','r').read().strip(),
 #        version=versioneer.get_version(),
 #        cmdclass=versioneer.get_cmdclass(),
@@ -59,11 +62,11 @@ if __name__ == '__main__':
         ],
         entry_points={
             'console_scripts': [
-                'respotgui=respot:main'
+                'respotgui=respot.gui:main'
             ],
-            'gui_scripts': [
-                'respotgui=respot:main'
-            ]
+#             'gui_scripts': [
+#                'respotgui=respot:main'
+#            ]
         },
         include_package_data=True,
         package_data={'img':['*']},
