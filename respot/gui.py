@@ -59,6 +59,7 @@ class WsThread(threading.Thread):
 
 def main():
 
+    file_curdir = os.path.dirname(os.path.abspath(__file__))
     column_layout = [
         [sg.Text("Currently Playing")],
         [sg.Text(size=(40, 1), key='-OUTPUT-')] ,
@@ -66,7 +67,7 @@ def main():
     ]
     # Define the window's contents
     layout = [  
-                [sg.Image('respot/no-music.png',key='-ICON-'),sg.Column(column_layout)] 
+                [sg.Image(file_curdir+'/img/no-music.png',key='-ICON-'),sg.Column(column_layout)] 
     ]
 
     # Create the window

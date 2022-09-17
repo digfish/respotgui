@@ -29,15 +29,15 @@ if __name__ == '__main__':
             long_description = f.read()
     except Exception:
         long_description = ''
-
+    """ 
     cur_version = get_version()
     new_version = increment_version(cur_version)
     store_version(new_version)
-
+    """
     setuptools.setup(
-        name='respogui',
-        version='0.1.12',
-        #version=open(os.path.join(current_directory, 'VERSION')).read().strip(),
+        name='respotgui',
+        version='0.1.28',
+#        version=open('VERSION','r').read().strip(),
 #        version=versioneer.get_version(),
 #        cmdclass=versioneer.get_cmdclass(),
         author="digfish",
@@ -46,7 +46,7 @@ if __name__ == '__main__':
             "A frontend for the respot-java Spotify client"
         ),
         long_description=long_description,
-        long_description_context_type='text/markdown',
+        long_description_content_type='text/markdown',
         license="Apache License 2.0",
         url="https://github.com/digfish/respogui",
         packages=setuptools.find_packages(),
@@ -65,7 +65,7 @@ if __name__ == '__main__':
                 'respotgui=respot:main'
             ]
         },
-        package_data={'.':['./*']},
-        install_requires=['PySimpleGUI', 'websocket-client', 'requests', 'Pillow'],
-        include_package_data=True
+        include_package_data=True,
+        package_data={'img':['*']},
+        install_requires=['PySimpleGUI', 'websocket-client', 'requests', 'Pillow']
     )
