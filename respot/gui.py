@@ -13,13 +13,15 @@ RESPOT_BASE_URL="http://localhost:24879"
     
 
 class WsThread(threading.Thread):
-    def __init__(self,window,track_timer):
+    def __init__(self,window,track_timer,timerthread):
         super().__init__()
         self.daemon = True
         self.ws = websocket.WebSocketApp("ws://localhost:24879/events",
                                 on_message=self.on_message)
         self.window = window
         self.track_timer = track_timer
+        self.timerthread = timerthread
+
 
     def run(self):
         self.ws.run_forever()
@@ -41,10 +43,14 @@ class WsThread(threading.Thread):
 
             album_icon_bytes = album_image(album)
             self.window['-ICON-'].update(data=album_icon_bytes)
+            if not self.timerthread.started:
+                self.timerthread.started = True
+                self.timerthread.start()
             self.track_timer.reset()
 
     def get_ws(self):
         return self.ws
+
 
 class TrackTimer:
 
@@ -55,12 +61,41 @@ class TrackTimer:
     def get_elapsed(self):
         return time.time() - self.start_time + self.elapsed
 
+    def set_elapsed(self,elapsed):
+        self.elapsed = elapsed
+
     def reset(self):
         self.start_time = time.time()
+        self.set_elapsed(0)
+
+    def resume(self,elapsed=0):
+        self.reset()
+        self.set_elapsed(elapsed)
 
     def __str__(self):
         elapsed = self.get_elapsed()
         return time.strftime("%M:%S", time.gmtime(elapsed))
+
+
+
+class TimerThread(threading.Thread):
+    def __init__(self,window,track_timer):
+        super().__init__()
+        self.daemon = True
+        self.started = False
+        self.window = window
+        self.track_timer = track_timer
+        self.terminate = False
+        self.paused = False
+
+    def run(self):
+        while True:
+            if not self.paused:
+                self.window['currently'].update(self.track_timer)
+                time.sleep(1)
+            if self.terminate:
+                break
+
 
 def album_image(album):
     album_name = album['name']
@@ -90,22 +125,26 @@ def currently_playing(jtree):
     time = f"{mins}m {secs}s"
     return f"{artist} - {songname}"
 
-def update_timer(window,track_timer):
-    window['currently'].update(track_timer)
-    threading.Timer(interval=1, function=update_timer,
-                    args=(window, track_timer)).start()
 
 def main():
     file_curdir = os.path.dirname(os.path.abspath(__file__))
-    resp = requests.post(RESPOT_BASE_URL + '/player/current' )
-    playing_label = currently_playing(resp.json())
-    album_icon_bytes = album_image(resp.json()['track']['album'])
-    already_elapsed = float(resp.json()['trackTime']) / 1000.0
-    """
-         mins = int(float(resp['trackTime']) / (1000 * 60))
-        secs = int((float(resp['trackTime']) / (1000)) % 60)
-        time = f"{mins}m {secs}s"
-    """
+    try:
+        resp = requests.post(RESPOT_BASE_URL + '/player/current' )
+    except (ConnectionRefusedError,requests.exceptions.ConnectionError):
+        sg.popup_error("ReSpot is not running\nLaunch it with java -jar librespot-api-1.6.2.jar")
+        print("ReSpot is not running")
+        sys.exit(1)
+    try:
+        playing_label = currently_playing(resp.json())
+        album_icon_bytes = album_image(resp.json()['track']['album'])
+        already_elapsed = float(resp.json()['trackTime']) / 1000.0
+        playing = True
+    except KeyError:
+        playing_label = "Nothing is playing"
+        album_icon_bytes = bytes()
+        already_elapsed = 0.0
+        playing = False
+
 
     column_layout = [
         [sg.Text(time.strftime("%M:%S", time.gmtime(already_elapsed)),key='currently')],
@@ -122,11 +161,18 @@ def main():
     window.finalize()
     track_timer=TrackTimer(already_elapsed)
 
-    thread = WsThread(window,track_timer)
+    timerthread_locker = threading.RLock()
 
-    timer = threading.Timer(interval=1,function=update_timer,args=(window,track_timer))
-    timer.start()
-    thread.start()
+    timerthread = TimerThread(window,track_timer)
+
+
+    wsthread = WsThread(window,track_timer,timerthread)
+ 
+    if playing:
+        timerthread.started = True
+        timerthread.start()
+ 
+    wsthread.start()
 
     while True:                               
     # Display and interact with the Window
@@ -137,14 +183,24 @@ def main():
             r = requests.post(RESPOT_BASE_URL + '/player/next')
         elif event == 'play_pause':
             r = requests.post(RESPOT_BASE_URL + '/player/play-pause')
-            new_button_icon = '||' if window['play_pause'].get_text() == '▶' else '▶'
+            current_button = window['play_pause'].get_text()
+            if current_button == '||': #pause
+                already_elapsed = track_timer.get_elapsed()
+                timerthread.paused = True
+            else: #resume
+                track_timer.resume(already_elapsed)
+                timerthread.paused = False
+            new_button_icon = '||' if current_button == '▶' else '▶'
             window['play_pause'].update(new_button_icon)
+            
 
         elif event == sg.WIN_CLOSED or event == 'dismiss': # if user closes window or clicks cancel
+            timerthread.terminate = True
             break
     window.close()
-    thread.get_ws().close()
-    thread.join()                               
+    wsthread.get_ws().close()
+    timerthread.join()
+    wsthread.join()                               
     
 
 if __name__ == "__main__":
