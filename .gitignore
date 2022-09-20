@@ -14,3 +14,7 @@ respogui-*/
 respogui-*.tar.gz
 respogui-*.zip
 respogui-*.tar.bz2
+dumps/
+*.log
+*.json
+*.pickle
