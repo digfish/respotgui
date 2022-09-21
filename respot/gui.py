@@ -8,6 +8,7 @@ from PIL import Image
 import time
 import pickle
 from queue import Queue
+import dotenv
 
 APP_NAME = "ReSpotGUI"
 RESPOT_BASE_URL="http://localhost:24879"
@@ -29,13 +30,15 @@ class WsThread(threading.Thread):
         self.ws.run_forever()
 
     def on_message(self,ws,msg):
+        global DEBUG
         jst = json.loads(msg)
         #print(json.dumps(jst,indent=4))
         event = jst['event']
-        open(f'dumps/{int(time.time()*10)}-{event}.json','w').write(msg)
+        if DEBUG:
+            open(f'dumps/{int(time.time()*10)}-{event}.json','w').write(msg)
         if event == 'trackSeeked':
             #self.track_timer.reset()
-            self.track_timer.set_elapsed(float(jst['trackTime']) % 1000.0)
+            self.track_timer.set_elapsed(float(jst['trackTime']) / 1000.0 - self.track_timer.get_elapsed())
         elif event == 'trackChanged':
             global first_playing
             # if first_playing:
@@ -46,7 +49,6 @@ class WsThread(threading.Thread):
                     change_selected_track(self.window['-LIST-'],+1)
                 else:
                     self.window['-LIST-'].update(set_to_index=0)
-
         elif event == 'metadataAvailable':
             track = jst['track']
             songname = track['name']
@@ -57,20 +59,22 @@ class WsThread(threading.Thread):
             self.window.set_title(f"{APP_NAME} => {title}")
             album = track['album']
             album_name = album['name']
-
             album_icon_bytes = album_image(album)
             self.window['-ICON-'].update(data=album_icon_bytes)
             self.track_timer.reset()
- 
+            self.track_timer.set_total_time(
+                float(jst['track']['duration']) / 1000.0)
+
     def get_ws(self):
         return self.ws
 
 
 class TrackTimer:
 
-    def __init__(self,elapsed=0.0):
+    def __init__(self,elapsed=0.0,total_time=0.0):
         self.start_time = time.time()
         self.elapsed = elapsed
+        self.total_time = total_time
 
     def get_elapsed(self):
         return time.time() - self.start_time + self.elapsed
@@ -86,9 +90,22 @@ class TrackTimer:
         self.reset()
         self.set_elapsed(elapsed)
 
+    def get_total_time(self):
+        return self.total_time
+
+    def set_total_time(self,total_time):
+        self.total_time = total_time
+
+    def format_mmss(self,timesecs):
+        return time.strftime("%M:%S", time.gmtime(timesecs))
+
     def __str__(self):
         elapsed = self.get_elapsed()
-        return time.strftime("%M:%S", time.gmtime(elapsed))
+#        return time.strftime("%M:%S", time.gmtime(elapsed))
+        elapsed_time_str = self.format_mmss(elapsed)
+        if self.total_time > 0.0: 
+            elapsed_time_str += "/" + self.format_mmss(self.total_time)
+        return elapsed_time_str
 
 class TimerThread(threading.Thread):
     def __init__(self,window,track_timer):
@@ -101,7 +118,6 @@ class TimerThread(threading.Thread):
         self.paused = False
 
     def run(self):
-        global lock
         while True:
             if not self.paused:
                 try:
@@ -145,7 +161,9 @@ def currently_playing(jtree):
     return f"{artist} - {songname}"
 
 def next_tracks():
-    r = requests.post(RESPOT_BASE_URL + "/player/tracks")
+    global DEBUG
+    if DEBUG:
+        r = requests.post(RESPOT_BASE_URL + "/player/tracks")
     open('next_tracks.json','wb').write(r.content)
     rjst = r.json()
     tracks = rjst['next']
@@ -174,9 +192,10 @@ def resolve_metadata(uri):
     return (uri,trackname)
 
 def update_list(window):
-    global lock
+    global DEBUG
     r = requests.get(RESPOT_BASE_URL + "/web-api/v1/me/player/queue")
-    open('player_queue.json','wb').write(r.content)
+    if DEBUG:
+        open('player_queue.json','wb').write(r.content)
     new_list = dict()
     if 'queue' in r.json().keys() and len(r.json()['queue']) > 0:
         for item in r.json()['queue']:
@@ -188,8 +207,10 @@ def update_list(window):
 #    lock.release()
 
 def search_playlist(query):
+    global DEBUG
     r = requests.post(RESPOT_BASE_URL + f"/search/:spotify:playlist:{query}")
-    open('search_playlist.json','wb').write(r.content)
+    if DEBUG:
+        open('search_playlist.json','wb').write(r.content)
     rjst = r.json()
     playlists = rjst['results']['playlists']
     playlist_hits = dict()
@@ -200,8 +221,10 @@ def search_playlist(query):
     return playlist_hits            
 
 def highlighted_playlists():
+    global DEBUG
     r = requests.get(RESPOT_BASE_URL + "/web-api/v1/browse/featured-playlists")
-    open('highlighted_playlists.json','wb').write(r.content)
+    if DEBUG:
+        open('highlighted_playlists.json','wb').write(r.content)
     rjst = r.json()
     playlist_uri_dict = dict()
     for item in rjst['playlists']['items']:
@@ -209,9 +232,11 @@ def highlighted_playlists():
     return playlist_uri_dict
 
 def get_playlist_tracks(playlist_uri):
+    global DEBUG
     playlist_id = playlist_uri.split(':')[-1]
     r = requests.get(RESPOT_BASE_URL + f"/web-api/v1/playlists/{playlist_id}/tracks")
-    open('playlist_tracks.json','wb').write(r.content)
+    if DEBUG:
+        open('playlist_tracks.json','wb').write(r.content)
     rjst = r.json()
     tracks = rjst['items']
     track_uri_dict = dict()
@@ -223,13 +248,20 @@ def format_time_elapsed(elapsed):
     return time.strftime("%M:%S", time.gmtime(elapsed))
 
 def change_selected_track(tracks_list_elem,step):
-    selected_index = tracks_list_elem.get_indexes()[0]
-    tracks_list_elem.update(set_to_index=selected_index + step)
+    curr_sel = tracks_list_elem.get_indexes()
+    if len(curr_sel) > 0:
+        selected_index = tracks_list_elem.get_indexes()[0]
+        tracks_list_elem.update(set_to_index=selected_index + step)
+    else:
+        tracks_list_elem.update(set_to_index=0)
 
 def main():
     global cache,first_playing
     playing = False
     first_playing = True
+
+    global DEBUG
+    DEBUG = dotenv.load_dotenv() != False
 
     active_playlist = dict()
     file_curdir = os.path.dirname(os.path.abspath(__file__))
@@ -248,8 +280,10 @@ def main():
         playing_label = currently_playing(resp.json())
         album_icon_bytes = album_image(resp.json()['track']['album'])
         already_elapsed = float(resp.json()['trackTime']) / 1000.0
+        total_track_time = float(resp.json()['track']['duration']) / 1000.0
         playing = True
-    except KeyError:
+    except KeyError as ke:
+        sys.stderr.write(str(ke))
         playing_label = "Nothing is playing"
         imagefilepath = file_curdir + '/img/no-music.png'
         with open(imagefilepath,'rb') as fp_image:
@@ -257,6 +291,7 @@ def main():
             Image.open(fp_image).save(pngbytes,format='PNG')
             album_icon_bytes = pngbytes.getvalue()            
         already_elapsed = 0.0
+        total_track_time = 0.0
        
 
 
@@ -284,7 +319,7 @@ def main():
     window = sg.Window(f"{APP_NAME} => {playing_label}" , layout,finalize=True)
     #window.set_alpha(0.0)
     #window.hide()
-    track_timer=TrackTimer(already_elapsed)
+    track_timer=TrackTimer(already_elapsed,total_track_time)
 
     timerthread = TimerThread(window,track_timer)
 

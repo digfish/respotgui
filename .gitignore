@@ -18,3 +18,4 @@ dumps/
 *.log
 *.json
 *.pickle
+.env
