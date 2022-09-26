@@ -70,5 +70,6 @@ if __name__ == '__main__':
         },
         include_package_data=True,
         package_data={'respot':['img/no-music.png']},
-        install_requires=['PySimpleGUI', 'websocket-client', 'requests', 'Pillow','python-dotenv']
+#        install_requires=['PySimpleGUI', 'websocket-client', 'requests', 'Pillow','python-dotenv','pycaw']
+        install_requires=open("requirements.txt").read().splitlines()
     )

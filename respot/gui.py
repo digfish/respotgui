@@ -10,6 +10,8 @@ import time
 import pickle
 from queue import Queue
 import dotenv
+from pycaw.pycaw import AudioUtilities
+import pynput
 
 APP_NAME = "ReSpotGUI"
 RESPOT_BASE_URL="http://localhost:24879"
@@ -40,6 +42,8 @@ class WsThread(threading.Thread):
         if event == 'trackSeeked':
             #self.track_timer.reset()
             self.track_timer.set_elapsed(float(jst['trackTime']) / 1000.0)
+        elif event == 'volumeChanged':
+             self.window['slider_volume'].update(int(jst['value'] * 100))
         elif event == 'trackChanged':
             global first_playing
             # if first_playing:
@@ -135,19 +139,42 @@ class TimerThread(threading.Thread):
             if self.terminate:
                 break
 
+class MediaKeysListener(pynput.keyboard.Listener):
+    def __init__(self,window):
+        super().__init__(on_release=self.on_press)
+        self.window = window
+
+    def listen(self):
+        self.start()
+    
+    def end(self):
+        self.stop()
+        self.join()
+
+    def on_press(self,key):
+        #print(key)
+        if key == pynput.keyboard.Key.media_play_pause:
+            self.window['play_pause'].click()
+        elif key == pynput.keyboard.Key.media_next:
+            self.window['next'].click()
+        elif key == pynput.keyboard.Key.media_previous:
+            self.window['prev'].click()
+
 def set_volume(volume): # 0 - 1
     volume_to_set = float(volume) * 65536.0
     #print(f"Setting volume to {volume_to_set}")
     requests.post(RESPOT_BASE_URL + "/player/set-volume",{'volume': int(volume_to_set)})
     return volume 
 
-def get_volume():
-    from pycaw.pycaw import AudioUtilities
+def get_java_audio_volume():
     sessions = AudioUtilities.GetAllSessions()
     for session in sessions:
         if session.Process and session.Process.name() == 'java.exe':
             return session.SimpleAudioVolume.GetMasterVolume()
-    return None 
+    return 0.5 
+
+def touch_initial_volume():
+    requests.post(RESPOT_BASE_URL + '/player/set-volume',{'step': -1 })
             
 def album_image(album):
     album_name = album['name']
@@ -314,15 +341,16 @@ def main():
         already_elapsed = 0.0
         total_track_time = 0.0
        
-
-
     controls_layout = [
-        [sg.Text(format_time_elapsed(already_elapsed),key='currently'),sg.Slider(range=(0,100),default_value=get_volume()*100.0,orientation='h',size=(15,15),enable_events=True,key='slider_volume')],
+        [sg.Text(format_time_elapsed(already_elapsed),key='currently'), 
+         sg.Slider(range=(0, total_track_time),disable_number_display=True, orientation='h', size=(15, 15), default_value=already_elapsed, 
+            key='slider', enable_events=True)],
         [sg.Text(playing_label,size=(40, 1), key='-OUTPUT-')] ,
         [sg.Button('<<', key='prev'), 
          sg.Button('||' if playing else '▶',key='play_pause'),
          sg.Button('>>', key='next'),
-         sg.Slider(range=(0, total_track_time),disable_number_display=True, orientation='h', size=(15, 15), default_value=already_elapsed, key='slider', enable_events=True)
+         sg.Slider(range=(0,100),default_value=50,orientation='h',size=(15,15),enable_events=True,
+            key='slider_volume')
         ],
     ]
     # Define the window's contents
@@ -366,10 +394,17 @@ def main():
     #window.un_hide()
     #window.set_alpha(1)
 
+    
     if playing:
         timerthread.start()
  
     wsthread.start()
+
+    keys_listener = MediaKeysListener(window)
+    keys_listener.start()
+
+    #set initial volume
+    threading.Thread(target=touch_initial_volume).start()
 
     while True:                               
     # Display and interact with the Window
@@ -457,7 +492,8 @@ def main():
     window.close()
     wsthread.get_ws().close()
     timerthread.join()
-    wsthread.join()                               
+    wsthread.join()
+    keys_listener.end()                              
     
 
 if __name__ == "__main__":

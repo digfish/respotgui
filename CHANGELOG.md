@@ -1,5 +1,4 @@
-#### 0.1.46 (2022-09-21)
-
+- Added slider for volume
 - added total time in timer and made improvements
 - Implemented search for playlists and listbox with active playlist
 - Minor changes to the gui. Removed thread timers
