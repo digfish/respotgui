@@ -1,3 +1,20 @@
+"""
+   Copyright 2022 digfish
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License."""
+
+
+
 import os,sys,io
 from re import search
 import PySimpleGUI as sg
@@ -12,11 +29,14 @@ from queue import Queue
 import dotenv
 from pycaw.pycaw import AudioUtilities
 import pynput
+import logging
 
 APP_NAME = "ReSpotGUI"
 RESPOT_BASE_URL="http://localhost:24879"
 
-lock = threading.RLock()
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(funcName)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S')
+
 
 class WsThread(threading.Thread):
     def __init__(self,window,track_timer,timerthread):
@@ -40,8 +60,12 @@ class WsThread(threading.Thread):
         if DEBUG:
             open(f'dumps/{int(time.time()*10)}-{event}.json','w').write(msg)
         if event == 'trackSeeked':
-            #self.track_timer.reset()
+            self.track_timer.reset()
             self.track_timer.set_elapsed(float(jst['trackTime']) / 1000.0)
+        elif event == 'playbackPaused': 
+            self.window['play_pause'].update('▶')
+        elif event == 'playbackResume':
+            self.window['play_pause'].update('⏸')
         elif event == 'volumeChanged':
              self.window['slider_volume'].update(int(jst['value'] * 100))
         elif event == 'trackChanged':
@@ -69,6 +93,22 @@ class WsThread(threading.Thread):
             self.track_timer.reset()
             self.track_timer.set_total_time(
                 float(jst['track']['duration']) / 1000.0)
+            
+            ## if empty list, fill it
+            current_playlist = self.window['-LIST-'].get_list_values()
+            if len(current_playlist) == 0 or current_playlist[0] == 'Radio playing. No queue':
+                current_playlist = long_operation_result(update_list)
+                if len(current_playlist) > 0:
+                    self.window['-LIST-'].update(values=current_playlist.values())
+                else:
+                    self.window['-LIST-'].update(values=['Radio playing. No queue'])
+            else: #compare the current playing track with the selected track
+                if songname != current_playlist[0]:
+                    current_playlist = long_operation_result(update_list)
+                    if len(current_playlist) > 0:
+                        self.window['-LIST-'].update(values=current_playlist.values())
+                        # clear the selection
+                        self.window['-LIST-'].set_value([])
 
     def get_ws(self):
         return self.ws
@@ -131,7 +171,7 @@ class TimerThread(threading.Thread):
                     self.window['slider'].set_tooltip(self.track_timer)
                     time.sleep(1)
                 except BaseException as ex:
-                    print("Restarting timer thread")
+                    logging.warning("Restarting timer thread")
                     #raise ex
                     new_timer_thread = TimerThread(self.window,self.track_timer)
                     new_timer_thread.start()
@@ -159,6 +199,16 @@ class MediaKeysListener(pynput.keyboard.Listener):
             self.window['next'].click()
         elif key == pynput.keyboard.Key.media_previous:
             self.window['prev'].click()
+            
+class SearchLister(dict):
+
+    def __init__(self,type_):
+        super().__init__()
+        self.typename = type_
+
+    def __str__(self) -> str:
+        return f"{self.typename} ({len(self)})"
+
 
 def set_volume(volume): # 0 - 1
     volume_to_set = float(volume) * 65536.0
@@ -188,7 +238,7 @@ def album_image(album):
         Image.open(io.BytesIO(jpgbytes)).save(pngbytes,format='PNG')
         
     except BaseException as e:
-        print("Error: " + str(e))
+        logging.info("Error: " + str(e))
         pass
     return pngbytes.getvalue()
 
@@ -255,7 +305,7 @@ def search_playlist(query):
     search_lists_grouped = {}
     for search_result_type in rjst['results'].keys():
         search_result_type_lowercase = search_result_type.lower()
-        search_lists_grouped[search_result_type_lowercase] = {}
+        search_lists_grouped[search_result_type_lowercase] = SearchLister(search_result_type_lowercase)
         #search_lists_grouped[search_result_type_lowercase]['total'] = rjst['results'][search_result_type]['total']
         for hit in rjst['results'][search_result_type]['hits']:
             search_lists_grouped[search_result_type_lowercase][hit['uri']] = hit['name']
@@ -281,6 +331,8 @@ def highlighted_playlists():
 
 def get_playlist_tracks(playlist_uri):
     global DEBUG
+    if type(playlist_uri) == tuple:
+        playlist_uri = playlist_uri[0]
     playlist_id = playlist_uri.split(':')[-1]
     r = requests.get(RESPOT_BASE_URL + f"/web-api/v1/playlists/{playlist_id}/tracks")
     if DEBUG:
@@ -303,7 +355,25 @@ def change_selected_track(tracks_list_elem,step):
     else:
         tracks_list_elem.update(set_to_index=0)
 
+def long_operation_result(function,*args):
+    """_summary_ : Runs a function in a separate thread and returns a result when it's done.
+
+    Args:
+        function (_callable_): _any function with any number of parameters_
+        *args (_any_): _any number of parameters to be passed to the called function_
+
+    Returns:
+        _any_: _the return value of the function passed in_
+    """
+    queue = Queue()
+    operation_thread = threading.Thread(target=lambda queue: queue.put(function(*args)),args=(queue,))
+    operation_thread.start()
+    operation_thread.join()
+    return queue.get()
+
+
 def main():
+    """Main function"""
     global cache,first_playing
     playing = False
     first_playing = True
@@ -331,7 +401,7 @@ def main():
         total_track_time = float(resp.json()['track']['duration']) / 1000.0
         playing = True
     except KeyError as ke:
-        print(ke)
+        logging.warning(ke,ke.with_traceback)
         playing_label = "Nothing is playing"
         imagefilepath = file_curdir + '/img/no-music.png'
         with open(imagefilepath,'rb') as fp_image:
@@ -346,13 +416,16 @@ def main():
          sg.Slider(range=(0, total_track_time),disable_number_display=True, orientation='h', size=(15, 15), default_value=already_elapsed, 
             key='slider', enable_events=True)],
         [sg.Text(playing_label,size=(40, 1), key='-OUTPUT-')] ,
-        [sg.Button('<<', key='prev'), 
-         sg.Button('||' if playing else '▶',key='play_pause'),
-         sg.Button('>>', key='next'),
+        [sg.Button('⏪', key='prev'),
+         sg.Button('⏸' if playing else '▶',key='play_pause'),
+         sg.Button('⏩', key='next'),
          sg.Slider(range=(0,100),default_value=50,orientation='h',size=(15,15),enable_events=True,
             key='slider_volume')
         ],
     ]
+    results_search_root = sg.TreeData()
+    results_search_elem = sg.Tree(data=results_search_root,headings=[],show_expanded=True,key='search_results',
+        expand_x=True,expand_y=True,enable_events=True);
     # Define the window's contents
     layout = [  
                 [
@@ -360,8 +433,8 @@ def main():
                     [sg.Image(album_icon_bytes,key='-ICON-'),sg.Column(controls_layout)],
                     [sg.Input(default_text='Search',key='input_search',size=(20,),enable_events=True),
                         sg.Submit('search',key='search_button') ],
-                        [sg.Combo(['Playlists','Tracks','Albums','Artists','Profiles','Genres','TopHit','Shows','AudioEpisodes'],key='search_type',default_value='Playlists',enable_events=True)],
-                    [sg.Listbox([],key='search_results',size=(45,10),expand_y=True,enable_events=True)]
+#                        [sg.Combo(['Playlists','Tracks','Albums','Artists','Profiles','Genres','TopHit','Shows','AudioEpisodes'],key='search_type',default_value='Playlists',enable_events=True)],
+                    [results_search_elem]
                 ],vertical_alignment='top'),
                 sg.Listbox([],auto_size_text=True,size=(40,20),key='-LIST-',enable_events=True,bind_return_key=True)
                 ] 
@@ -370,27 +443,35 @@ def main():
 
     # Create the window
     window = sg.Window(f"{APP_NAME} => {playing_label}" , layout,finalize=True)
+    # remove the tree header row
+    results_search_elem.Widget['show'] = 'tree'
     #window.set_alpha(0.0)
     #window.hide()
-    track_timer=TrackTimer(already_elapsed,total_track_time)
-
+    track_timer = TrackTimer(already_elapsed,total_track_time)
     timerthread = TimerThread(window,track_timer)
-
     wsthread = WsThread(window,track_timer,timerthread)
 
-    queue = Queue()
+    active_playlist = long_operation_result(update_list)
+    """     queue = Queue()
 
-    list_updater_thread = threading.Thread(target=lambda queue: queue.put(update_list()),args=(queue,))
-    list_updater_thread.start()
+        list_updater_thread = threading.Thread(target=lambda queue: queue.put(update_list()),args=(queue,))
+        list_updater_thread.start()
 
-    active_playlist = queue.get()
+        active_playlist = queue.get()
+    """
     window['-LIST-'].update(active_playlist.values())
     #if len(active_playlist.values()) > 0:
     #    window['-LIST-'].set_value(list(active_playlist.values())[0])
 
-    search_results_by_type = highlighted_playlists()
-    search_results = {}
-    window['search_results'].update(map(lambda item: item['name'],search_results_by_type.values()))
+    results_search_root.insert('','featured_playlists','Featured Playlists',[])
+    featured_playlists = highlighted_playlists()
+    for urn_key in featured_playlists:
+        result = featured_playlists[urn_key] 
+        results_search_root.insert('featured_playlists',urn_key,result['name'],[result])
+    window['search_results'].update(results_search_root)
+#    search_results_by_type = highlighted_playlists()
+#    search_results = {}
+#    window['search_results'].update(map(lambda item: item['name'],search_results_by_type.values()))
     #window.un_hide()
     #window.set_alpha(1)
 
@@ -417,7 +498,7 @@ def main():
             change_selected_track(window['-LIST-'],+1)
         elif event == 'play_pause':
             current_button = window['play_pause'].get_text()
-            if current_button == '||': #pause
+            if current_button == '⏸': #pause
                 requests.post(RESPOT_BASE_URL + '/player/pause')
                 already_elapsed = track_timer.get_elapsed()
                 timerthread.paused = True
@@ -427,7 +508,7 @@ def main():
                 track_timer.resume(already_elapsed)
                 timerthread.paused = False
                 playing = True
-            new_button_icon = '||' if current_button == '▶' else '▶'
+            new_button_icon = '⏸' if current_button == '▶' else '▶'
             window['play_pause'].update(new_button_icon)
         elif event == '-LIST-': #click in the playlist listbox
             selected_index = window['-LIST-'].get_indexes()[0]
@@ -435,32 +516,52 @@ def main():
             requests.post(RESPOT_BASE_URL + '/player/load',{'uri':urn})
             requests.post(RESPOT_BASE_URL + '/player/play-pause')
         elif event == 'search_button': # click in the "search playlists" button
+            results_search_root = sg.TreeData() #empties the search results tree
             search_results = search_playlist(values['input_search'])
             front_playlists = search_results
-            window['search_results'].update(search_results.values())
-        elif event == 'search_type': # change the search type
-            total_result_items = len(search_results[values['search_type'].lower()])
-            if total_result_items > 0:
-                #del search_results[values['search_type'].lower()]['total']
-                item_names = search_results[values['search_type'].lower()].values()
-                window['search_results'].update(item_names)
-                search_results_by_type = search_results[values['search_type'].lower()]
-            else:
-                window['search_results'].update(['No results'])
+            for category  in search_results:
+                results_in_category = search_results[category] 
+                results_search_root.insert('',category,results_in_category,[])
+                for urn_key in results_in_category:
+                    itemname = results_in_category[urn_key] 
+                    results_search_root.insert(category,urn_key,itemname,[urn_key,itemname])
+            window['search_results'].update(results_search_root)
+            window['search_results'].expand(expand_row=False)
+            """         elif event == 'search_type': # change the search type
+                        total_result_items = len(search_results[values['search_type'].lower()])
+                        if total_result_items > 0:
+                            #del search_results[values['search_type'].lower()]['total']
+                            item_names = search_results[values['search_type'].lower()].values()
+                            window['search_results'].update(item_names)
+                            search_results_by_type = search_results[values['search_type'].lower()]
+                        else:
+                            window['search_results'].update(['No results'])
+            """         
+
         elif event == 'search_results': # click in the listbox of search results
-            selected_index = window['search_results'].get_indexes()[0]
-            urn = list(search_results_by_type.keys())[selected_index]
-            requests.post(RESPOT_BASE_URL + '/player/load',{'uri':urn})
+            node_key = values[event][0]
+            logging.debug(f"node_key: {node_key}")
+            node_content = window['search_results'].TreeData.tree_dict[node_key]
+            logging.debug(f"node_content: {node_content}")
+            category = node_content.parent
+            if len(category.strip()) == 0: # root node, does nothing
+                continue
+            #selected_index = window['search_results'].get_indexes()[0]
+            #urn = list(search_results_by_type.keys())[selected_index]
+            requests.post(RESPOT_BASE_URL + '/player/load',{'uri':node_key})
             requests.post(RESPOT_BASE_URL + '/player/play-pause')
 
-            if values['search_type'] in ['Playlists']:
-                list_updater_thread = threading.Thread(target=lambda queue,urn: queue.put(get_playlist_tracks(urn)),args=(queue,urn))
-                list_updater_thread.start()
-                active_playlist = queue.get()
+            if category in ['playlists']:
+                urn = node_key
+                active_playlist = long_operation_result(get_playlist_tracks,urn)
+ #               list_updater_thread = threading.Thread(target=lambda queue,urn: queue.put(get_playlist_tracks(urn)),args=(queue,urn))
+ #               list_updater_thread.start()
+ #               active_playlist = queue.get()
             else:
-                list_updater_thread = threading.Thread(target=lambda queue: queue.put(update_list()),args=(queue,))
-                list_updater_thread.start()
-                active_playlist = queue.get()
+                active_playlist = long_operation_result(update_list)
+                # list_updater_thread = threading.Thread(target=lambda queue: queue.put(update_list()),args=(queue,))
+                # list_updater_thread.start()
+                # active_playlist = queue.get()
 
             if len(active_playlist) > 0:
                 window['-LIST-'].update(active_playlist.values())
@@ -470,14 +571,15 @@ def main():
             first_playing = True
             if not playing:
                 playing = True
-                window['play_pause'].update('||')
+                window['play_pause'].update('⏸')
                 timerthread.start()
+            
         elif event == 'input_search':
             if values['input_search'] == 'Search':
                 window['input_search'].update('')
         elif event == 'slider':
             requests.post(RESPOT_BASE_URL + f"/player/seek",{'pos':int(values['slider']) * 1000})
-            print("seeking to " + str(values['slider']))
+            logging.debug("seeking to " + str(values['slider']))
             track_timer.set_elapsed(values['slider'])
         elif event == 'slider_volume':
             #print(f"Volume set to {values['slider_volume']}")
@@ -486,7 +588,7 @@ def main():
             timerthread.terminate = True
             break
         else:
-            print(event,'=>',values)
+            logging.debug(event,'=>',values)
 
     pickle.dump(cache,open(file_curdir + '/cache.pickle','wb'))
     window.close()

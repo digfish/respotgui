@@ -1,3 +1,4 @@
+- Now listens to presses on media keys
 - Added slider for volume
 - added total time in timer and made improvements
 - Implemented search for playlists and listbox with active playlist

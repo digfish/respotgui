@@ -1,0 +1,68 @@
+@startuml
+class Player {
+    WsThread wsthread
+    TimerThread timerthread 
+    TrackTimer track_timer
+    PySimpleGui.Window gui
+    MediaKeysListener keys_listener 
+    void play()
+}
+
+Player *-- WsThread
+Player *-- TimerThread
+Player *-- TrackTimer
+Player *-- PySimpleGui.Window
+Player *-- MediaKeysListener
+
+class WsThread {
+    websocket.WebSocketApp ws
+    PySimpleGUI.Window window
+    TimerThread timerthread 
+    TrackTimer track_timer
+    +void run()
+    +void on_message(ws,msg)
+    +WebSocketApp get_ws()
+}
+
+
+WsThread *-- websocket.WebSocketApp
+WsThread o-- PySimpleGUI.Window
+WsThread o-- TimerThread
+WsThread o-- TrackTimer
+
+class TrackTimer {
+    float start_time
+    float elapsed 
+    float total_time
+    +void reset()
+    +float get_elapsed()
+    +void set_elapsed(float)
+    +float get_total_time()
+    +void set_total_time(float)
+    +void resume(elapsed)
+    +str format_mmss(timesecs)
+    +str __str__()
+}
+
+class TimerThread {
+    PySimpleGUI.Window window
+    TrackTimer track_timer
+    +void run()
+}
+
+TimerThread o-- PySimpleGUI.Window
+TimerThread o-- TrackTimer
+
+class MediaKeysListener {
+    PySimpleGUI.Window window
+    +void listen()
+    void on_press(key)
+    +void end()
+}
+
+MediaKeysListener o-- PySimpleGUI.Window
+
+threading.Thread <|-- WsThread
+threading.Thread <|-- TimerThread
+pyinput.Keyboard.Listener <|-- MediaKeysListener 
+@enduml
