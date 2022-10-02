@@ -12,14 +12,16 @@ def increment_version(current_version):
 
 def get_version():
     try:
-        with open('VERSION', 'r') as f:
+        current_directory = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(current_directory,'VERSION.txt'), 'r') as f:
             version = f.read().strip()
     except FileNotFoundError:
         version = '0.0.0'
     return version
 
 def store_version(last_version):
-    with open('VERSION', 'w') as f:
+    current_directory = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(f"{current_directory}/respot",'VERSION.txt'), 'w') as f:
         f.write(last_version)
 
 if __name__ == '__main__':
@@ -37,6 +39,7 @@ if __name__ == '__main__':
     new_version = increment_version(cur_version)
     store_version(new_version)
     """
+    store_version(cfg['bumpversion']['current_version'])
     setuptools.setup(
         name='respotgui',
         version=cfg['bumpversion']['current_version'],
@@ -69,7 +72,7 @@ if __name__ == '__main__':
 #            ]
         },
         include_package_data=True,
-        package_data={'respot':['img/no-music.png']},
+        package_data={'respot':['img/no-music.png','VERSION.txt']},
 #        install_requires=['PySimpleGUI', 'websocket-client', 'requests', 'Pillow','python-dotenv','pycaw']
         install_requires=open("requirements.txt").read().splitlines()
     )

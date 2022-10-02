@@ -1,3 +1,5 @@
+- Changed font to Verdana and implemented buttons
+- Search results in a tree, cleaned code
 - Now listens to presses on media keys
 - Added slider for volume
 - added total time in timer and made improvements

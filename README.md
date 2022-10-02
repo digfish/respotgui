@@ -37,7 +37,10 @@ respotgui
 
 [^1]: Download the file `librespot-api-*.jar` and execute it with `java -jar`
 
+# Changelog
 
+- Changed font to Verdana and implemented buttons
+- Search results in a tree, cleaned code
 - Now listens to presses on media keys
 - Added slider for volume
 - added total time in timer and made improvements
