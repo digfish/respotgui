@@ -424,6 +424,11 @@ def get_active_device_id():
 def make_this_player_active():
     requests.request('PUT',RESPOT_BASE_URL + "/web-api/v1/me/player", json={"device_ids": [THIS_DEVICE_ID]})
 
+def get_devices():
+    r = requests.get(RESPOT_BASE_URL + "/web-api/v1/me/player/devices")
+    return r.json()['devices']
+
+
 
 def main():
     """Main function"""
@@ -543,7 +548,15 @@ def main():
     #tab_playlists_set = ordered_set.OrderedSet(['Current'])
     window['tabs_list'].update(tab_playlists.values())
     selected_tab_index = 0
-    
+
+    # recreate tabs for playlists stored in cache
+    if len(cache) > 0:
+        for urn in cache:
+            cache_item = cache[urn]
+            tab_playlists[urn] = cache_item['node'].text
+            window['tabs_list'].update(tab_playlists.values())
+            window['right_tab_group'].add_tab(new_playlist_tab(cache_item['node'],cache_item['playlist']))
+
     if playing and not timerthread.is_alive():
         timerthread.start()
  
@@ -654,7 +667,7 @@ def main():
 
             try:
                 window['right_tab_group'].Widget.select(selected_tab_index)
-                cache[urn] = { 'title': node_content.text, 'content': new_playlist }
+                cache[urn] = {'node': node_content, 'playlist': new_playlist}
             except Exception as ex:
                 ...
                 #sg.popup_error(f"Error selecting tab: {ex}")
@@ -699,7 +712,7 @@ def main():
         elif event is not None and  event.startswith('playlist_tab|'): # click inside the listbox of any of the playlist taba
             playlist_urn = event.split('|')[1]
             if playlist_urn in cache.keys():
-                active_playlist = cache[playlist_urn]['content']
+                active_playlist = cache[playlist_urn]['playlist']
                 selected_index = window[event].get_indexes()[0]
                 track_urn = list(active_playlist.keys())[selected_index]
                 #requests.post(RESPOT_BASE_URL + '/player/load',{'uri':track_urn})
