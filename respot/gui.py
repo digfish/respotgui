@@ -15,6 +15,7 @@
 
 
 
+from collections import OrderedDict
 import os,sys,io
 from re import search
 import PySimpleGUI as sg
@@ -35,6 +36,7 @@ import about
 
 APP_NAME = "ReSpotGUI"
 RESPOT_BASE_URL="http://localhost:24879"
+THIS_DEVICE_ID = "7281984a4a503aed750dc36819a999dd0c03c63a"
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(funcName)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S')
@@ -76,41 +78,41 @@ class WsThread(threading.Thread):
             #     first_playing = False
             # else:
             if not jst['userInitiated']: 
-                if len(self.window['-LIST-'].get_indexes()) > 0:
-                    change_selected_track(self.window['-LIST-'],+1)
+                if len(self.window['current_queue'].get_indexes()) > 0:
+                    change_selected_track(self.window['current_queue'],+1)
                 else:
-                    self.window['-LIST-'].update(set_to_index=0)
+                    self.window['current_queue'].update(set_to_index=0)
         elif event == 'metadataAvailable':
             track = jst['track']
             songname = track['name']
             artist = track['artist'][0]
             artistname = artist['name']
             title = f"{artistname} - {songname}"
-            self.window['-OUTPUT-'].update(title)
+            self.window['playing_text'].update(title)
             self.window.set_title(f"{APP_NAME} => {title}")
             album = track['album']
             album_name = album['name']
             album_icon_bytes = album_image(album)
-            self.window['-ICON-'].update(data=album_icon_bytes)
+            self.window['-ICON-'].update(data=album_icon_bytes,size=(128,128))
             self.track_timer.reset()
             self.track_timer.set_total_time(
                 float(jst['track']['duration']) / 1000.0)
             
             ## if empty list, fill it
-            current_playlist = self.window['-LIST-'].get_list_values()
+            current_playlist = self.window['current_queue'].get_list_values()
             if len(current_playlist) == 0 or current_playlist[0] == 'Radio playing. No queue':
                 current_playlist = long_operation_result(update_list)
                 if len(current_playlist) > 0:
-                    self.window['-LIST-'].update(values=current_playlist.values())
+                    self.window['current_queue'].update(values=current_playlist.values())
                 else:
-                    self.window['-LIST-'].update(values=['Radio playing. No queue'])
+                    self.window['current_queue'].update(values=['Radio playing. No queue'])
             else: #compare the current playing track with the selected track, if are not equal, refill the playlist
                 if songname != current_playlist[0]:
                     current_playlist = long_operation_result(update_list)
                     if len(current_playlist) > 0:
-                        self.window['-LIST-'].update(values=current_playlist.values())
+                        self.window['current_queue'].update(values=current_playlist.values())
                         # clear the selection
-                        self.window['-LIST-'].set_value([])
+                        self.window['current_queue'].set_value([])
 
             if not self.timerthread.is_alive():
                 self.timerthread.start()
@@ -180,12 +182,13 @@ class TimerThread(threading.Thread):
                     self.window['currently'].update(self.track_timer)
                     self.window['slider'].update(self.track_timer.get_elapsed())
                     self.window['slider'].set_tooltip(self.track_timer)
-                    time.sleep(1)
                 except BaseException as ex:
                     logging.warning("Restarting timer thread")
                     #raise ex
                     new_timer_thread = TimerThread(self.window,self.track_timer)
                     new_timer_thread.start()
+            
+            time.sleep(1)
 
             if self.terminate:
                 break
@@ -240,14 +243,19 @@ def touch_initial_volume():
     requests.post(RESPOT_BASE_URL + '/player/set-volume',{'step': -1 })
             
 def album_image(album):
+    import PIL
     album_name = album['name']
-    album_image = album['coverGroup']['image'][1]
+    album_image = album['coverGroup']['image'][0]
     album_image_token = album_image['fileId']
     album_image_url = 'http://i.scdn.co/image/'+ album_image_token.lower()
     jpgbytes = requests.get(album_image_url).content
     pngbytes = io.BytesIO()
     try:
-        Image.open(io.BytesIO(jpgbytes)).save(pngbytes,format='PNG')
+        im = Image.open(io.BytesIO(jpgbytes))
+        resized = im.resize((128,128),PIL.Image.Resampling.LANCZOS)
+        resized.save(pngbytes,format='png')
+        return pngbytes.getvalue()
+        #im.save(pngbytes,format='PNG')
         
     except BaseException as e:
         logging.info("Error: " + str(e))
@@ -397,9 +405,29 @@ def long_operation_result(function,*args):
     operation_thread.join()
     return queue.get()
 
+def new_playlist_tab(node_content,new_playlist):
+    return sg.Tab(node_content.text,[[sg.Listbox(new_playlist.values(),enable_events=True, 
+        expand_y=True,expand_x=True,size=(40,20),bind_return_key=True,k=f"playlist_tab|{node_content.key}")]],
+        expand_x=True)
+
+    """sg.Tab('Current',[[
+            sg.Listbox([],auto_size_text=True,size=(40,20),key='current_queue',enable_events=True,bind_return_key=True,expand_x=True)
+    """
+
+def close_session():
+    requests.post(RESPOT_BASE_URL + "/instance/close")
+
+def get_active_device_id():
+    r = requests.get(RESPOT_BASE_URL + "/web-api/v1/me/player")
+    return r.json()['device']['id']
+
+def make_this_player_active():
+    requests.request('PUT',RESPOT_BASE_URL + "/web-api/v1/me/player", json={"device_ids": [THIS_DEVICE_ID]})
+
 
 def main():
     """Main function"""
+    import ordered_set
     global cache,first_playing
     playing = False
     first_playing = True
@@ -438,40 +466,54 @@ def main():
             album_icon_bytes = pngbytes.getvalue()            
         already_elapsed = 0.0
         total_track_time = 0.0
-       
-    controls_layout = [
-        [sg.Text(format_time_elapsed(already_elapsed),key='currently'), 
-         sg.Slider(range=(0, total_track_time),disable_number_display=True, orientation='h', size=(15, 15), default_value=already_elapsed, 
-            key='slider', enable_events=True)],
-        [sg.Text(playing_label,size=(40, 1), key='-OUTPUT-')] ,
-        [sg.Button('⏪', key='prev'),
+
+    first_row = [
+         sg.Button('⏪', key='prev'),
          sg.Button('⏸' if playing else '▶',key='play_pause'),
          sg.Button('⏩', key='next'),
-         sg.Button('🔀',key='shuffle',button_color=('green'),tooltip='Shuffle'),
-         sg.Button("🔁",key='repeat',button_color=('green'),tooltip=f"Repeat: {repeat_mode}"),
+         sg.Combo(['Shuffle Off','Shuffle on'],key='shuffle',enable_events=True, tooltip='Shuffle',default_value='Shuffle Off',readonly=True),
+         sg.Combo(['none','track','context'],key='repeat',enable_events=True,tooltip=f"Repeat: {repeat_mode}",default_value='none',readonly=True),
+         sg.Slider(range=(0, total_track_time),disable_number_display=True, orientation='h', size=(15, 15), default_value=already_elapsed, 
+            key='slider', enable_events=True),
+         sg.Text(format_time_elapsed(already_elapsed),key='currently'), 
          sg.Slider(range=(0,100),default_value=50,orientation='h',size=(15,15),enable_events=True,
-            key='slider_volume')
-        ],
+            key='slider_volume',disable_number_display=True),
     ]
+
+    # define the tree
     results_search_root = sg.TreeData()
-    results_search_elem = sg.Tree(data=results_search_root,headings=[],show_expanded=False,key='search_results',
+    results_search_elem = sg.Tree(data=results_search_root,headings=[],show_expanded=False,key='highlights_tree',
         expand_x=True,expand_y=True,enable_events=True);
-    # Define the window's contents
-    layout = [  
-                [
-                sg.Column( [
-                    [sg.Image(album_icon_bytes,key='-ICON-'),sg.Column(controls_layout)],
-                    [sg.Input(default_text='Search',key='input_search',size=(20,),enable_events=True),
-                        sg.Submit('search',key='search_button') ],
-                    [results_search_elem]
-                ],vertical_alignment='top',expand_y=True),
-                sg.Listbox([],auto_size_text=True,size=(40,20),key='-LIST-',enable_events=True,bind_return_key=True)
-                ] 
+
+    second_row = [
+        sg.Column([
+            [sg.TabGroup([[sg.Tab('Playlists',k='left_tab_group',
+            layout=[[results_search_elem]]),sg.Tab('Tabs',layout=[[sg.Listbox([],k='tabs_list',expand_x=True,
+                expand_y=True,enable_events=True)]])]],expand_y=True,expand_x=True)],
+            [sg.Input(default_text='Search',key='input_search',size=(20,),enable_events=True), 
+                sg.Submit('search',key='search_button') ] 
+                ], vertical_alignment='top',expand_y=True),
+        sg.TabGroup([[sg.Tab('Current',[[ 
+            sg.Listbox([],auto_size_text=True,size=(40,20),key='current_queue',enable_events=True,bind_return_key=True,expand_x=True)
+            ]])
+        ]],k='right_tab_group',size=(500,250),expand_y=True,enable_events=True)
     ]
+
+    third_row = [
+        sg.Image(album_icon_bytes,key='-ICON-'),
+        sg.Text(playing_label,size=(40, 1), key='playing_text',expand_x=False),
+        sg.Text('',size=(40,1),key='current_playlist_name',expand_x=True),
+        sg.Button('Remove Tab',key='remove_tab',disabled=True)
+    ]
+
+    # Define the window's contents
+    layout = [ [first_row],
+         [second_row],
+          [third_row] ]
 
 
     # Create the window
-    window = sg.Window(f"{APP_NAME} => {playing_label}" , layout, font=('Verdana',10), finalize=True)
+    window = sg.Window(f"{APP_NAME} => {playing_label}" , layout, font=('Verdana',10), finalize=True, resizable=True)
     # remove the tree header row
     results_search_elem.Widget['show'] = 'tree'
     track_timer = TrackTimer(already_elapsed,total_track_time)
@@ -480,7 +522,7 @@ def main():
 
     active_playlist = long_operation_result(update_list)
 
-    window['-LIST-'].update(active_playlist.values())
+    window['current_queue'].update(active_playlist.values())
 
     results_search_root.insert('','featured_playlists','Featured Playlists',[])
     featured_playlists = long_operation_result(highlighted_playlists)
@@ -495,8 +537,12 @@ def main():
         results_search_root.insert('user_playlists',urn_key,result['name'],[result])
     
     
-    window['search_results'].update(results_search_root)
-
+    window['highlights_tree'].update(results_search_root)
+    tab_playlists = OrderedDict()
+    tab_playlists['current'] = 'Current'
+    #tab_playlists_set = ordered_set.OrderedSet(['Current'])
+    window['tabs_list'].update(tab_playlists.values())
+    selected_tab_index = 0
     
     if playing and not timerthread.is_alive():
         timerthread.start()
@@ -513,15 +559,16 @@ def main():
     #show_about(window)
 
     shuffle_enabled = False
+    make_this_player_active()
     while True:                               
     # Display and interact with the Window
         event, values = window.read()
         if event == 'prev':
             r = requests.post(RESPOT_BASE_URL + '/player/prev')
-            change_selected_track(window['-LIST-'],-1)
+            change_selected_track(window['current_queue'],-1)
         elif event == 'next':
             r = requests.post(RESPOT_BASE_URL + '/player/next')
-            change_selected_track(window['-LIST-'],+1)
+            change_selected_track(window['current_queue'],+1)
         elif event == 'play_pause':
             current_button = window['play_pause'].get_text()
             if current_button == '⏸': #pause
@@ -537,31 +584,27 @@ def main():
             new_button_icon = '⏸' if current_button == '▶' else '▶'
             window['play_pause'].update(new_button_icon)
         elif event == 'shuffle':
-            shuffle_enabled = not shuffle_enabled
+            logging.debug('shuffle',values['shuffle'])
+            shuffle_enabled = (values['shuffle'] == 'Shuffle on')
             requests.post(RESPOT_BASE_URL + '/player/shuffle',{'val':'enabled' if shuffle_enabled else 'disabled'})
             window['shuffle'].set_tooltip(shuffle_enabled)
-            window['shuffle'].update(button_color=('green' if not shuffle_enabled else 'red'))
             active_playlist = long_operation_result(update_list)
-            window['-LIST-'].update(active_playlist.values())
-            window['-LIST-'].update(set_to_index=0)    
+            window['current_queue'].update(active_playlist.values())
+            window['current_queue'].update(set_to_index=0)    
         elif event == 'repeat':
-            if repeat_mode == 'none':
-                repeat_mode = 'track'
-                button_color = 'red'
-            elif repeat_mode == 'track':
-                repeat_mode = 'context'
-                button_color = 'pink' 
-            else:   
-                repeat_mode = 'none'
-                button_color = 'green'
-            requests.post(RESPOT_BASE_URL + f'/player/repeat',{'val':repeat_mode})
+            requests.post(RESPOT_BASE_URL + f'/player/repeat',{'val':values['repeat']})
             window['repeat'].set_tooltip(f'Repeat mode: {repeat_mode}')
-            window['repeat'].update(button_color=button_color)      
-        elif event == '-LIST-': #click in the playlist listbox
-            selected_index = window['-LIST-'].get_indexes()[0]
-            urn = list(active_playlist.keys())[selected_index]
-            requests.post(RESPOT_BASE_URL + '/player/load',{'uri':urn})
-            requests.post(RESPOT_BASE_URL + '/player/play-pause')
+            #window['repeat'].update(button_color=button_color)      
+            active_playlist = long_operation_result(update_list)
+            window['current_queue'].update(active_playlist.values())
+            window['current_queue'].update(set_to_index=0)
+        elif event == 'current_queue':  # click in the playlist listbox
+            if len(window['current_queue'].get_indexes()) > 0:
+                selected_index = window['current_queue'].get_indexes()[0]
+                urn = list(active_playlist.keys())[selected_index]
+                requests.post(RESPOT_BASE_URL + '/player/load',{'uri':urn})
+                requests.post(RESPOT_BASE_URL + '/player/play-pause')
+                window['current_playlist_name'].update("current queue")
         elif event == 'search_button': # click in the "search playlists" button
             results_search_root = sg.TreeData() #empties the search results tree
             search_results = search_playlist(values['input_search'])
@@ -572,40 +615,61 @@ def main():
                 for urn_key in results_in_category:
                     itemname = results_in_category[urn_key] 
                     results_search_root.insert(category,urn_key,itemname,[urn_key,itemname])
-            window['search_results'].update(results_search_root)
-            window['search_results'].expand(expand_row=False)
+            window['highlights_tree'].update(results_search_root)
+            window['highlights_tree'].expand(expand_row=False)
 
-        elif event == 'search_results': # click in the listbox of search results
+        elif event == 'highlights_tree': # click in the tree of playlist and search results
+            if len(values[event]) == 0:
+                 continue
             node_key = values[event][0]
             logging.debug(f"node_key: {node_key}")
-            node_content = window['search_results'].TreeData.tree_dict[node_key]
-            logging.debug(f"node_content: {node_content}")
+            node_content = window['highlights_tree'].TreeData.tree_dict[node_key]
+            logging.debug(f"node_content title: {node_content.text}")
             category = node_content.parent
             if len(category.strip()) == 0: # root node, does nothing
                 continue
-            requests.post(RESPOT_BASE_URL + '/player/load',{'uri':node_key})
-            requests.post(RESPOT_BASE_URL + '/player/play-pause')
+            urn = node_key
+            if node_key not in tab_playlists.keys(): # if a tab for this playlist does not exist, create it
+                tab_playlists[node_key] = node_content.text
+                if category in ['playlists','user_playlists','featured_playlists']:
+                    urn = node_key
+                    new_playlist = long_operation_result(get_playlist_tracks,urn)
+                elif category in ['tracks']: # if the clicked item in the tree, is a track add it to the queue and play it
+                    requests.post(RESPOT_BASE_URL + '/player/addToQueue',{'uri':urn})
+                    active_playlist = long_operation_result(update_list)
+                    window['current_queue'].update(active_playlist.values())
+                    # skip to the next item in the queue, which is the one we just added
+                    requests.post(RESPOT_BASE_URL + '/player/next')
+                else:
+                    new_playlist = long_operation_result(update_list)
+                    
+                #new_tab = sg.Tab(node_content.text,[[sg.Listbox(new_playlist.values(),enable_events=True, expand_y=True,expand_x=True)]],k=node_content,expand_x=True)
+                if category != 'tracks': # create a new tab at the right for the playlist
+                    window['right_tab_group'].add_tab(new_playlist_tab(node_content,new_playlist))
+                    window['tabs_list'].update(tab_playlists.values())
 
-            if category in ['playlists']:
-                urn = node_key
-                active_playlist = long_operation_result(get_playlist_tracks,urn)
-            else:
-                active_playlist = long_operation_result(update_list)
+            new_tab_key = f"playlist_tab|{node_key}"
+            # gives focus to the tab
+            selected_tab_index = list(tab_playlists.keys()).index(node_key)
 
-            if len(active_playlist) > 0:
-                window['-LIST-'].update(active_playlist.values())
-                window['-LIST-'].update(set_to_index=0)
-            else:
-                window['-LIST-'].update(['No tracks'])
-            first_playing = True
+            try:
+                window['right_tab_group'].Widget.select(selected_tab_index)
+                cache[urn] = { 'title': node_content.text, 'content': new_playlist }
+            except Exception as ex:
+                ...
+                #sg.popup_error(f"Error selecting tab: {ex}")
+            
+            #requests.post(RESPOT_BASE_URL + '/player/load',{'uri':node_key})
+            #requests.post(RESPOT_BASE_URL + '/player/play-pause')
+            """         first_playing = True
             if not playing:
                 playing = True
                 window['play_pause'].update('⏸')
                 if not timerthread.running:
                     timerthread.start()
-            
+            """            
         elif event == 'input_search':
-            if values['input_search'] == 'Search':
+            if values['input_search'].strip() == 'Search':
                 window['input_search'].update('')
         elif event == 'slider':
             requests.post(RESPOT_BASE_URL + f"/player/seek",{'pos':int(values['slider']) * 1000})
@@ -614,13 +678,50 @@ def main():
         elif event == 'slider_volume':
             #print(f"Volume set to {values['slider_volume']}")
             set_volume(values['slider_volume']/100.0)
-        elif event == '-TIMEOUT-':
-            logging.debug(event,values)
+        elif event == 'right_tab_group':
+            logging.debug(["Changed tab to =>",values[event]])
+            if len(tab_playlists) > 1:
+                window['remove_tab'].update(disabled = False)
+            else:
+                window['remove_tab'].update(disabled = True)
+
+            selected_tab_title = values['right_tab_group']
+            try:
+                selected_tab_index = list(tab_playlists.values()).index(selected_tab_title)
+                window['tabs_list'].update(set_to_index=selected_tab_index)
+            except:
+                pass
+
+        elif event == 'tabs_list':
+            selected_index = window[event].get_indexes()[0]
+            window['right_tab_group'].Widget.select(selected_index)
+            ...
+        elif event is not None and  event.startswith('playlist_tab|'): # click inside the listbox of any of the playlist taba
+            playlist_urn = event.split('|')[1]
+            if playlist_urn in cache.keys():
+                active_playlist = cache[playlist_urn]['content']
+                selected_index = window[event].get_indexes()[0]
+                track_urn = list(active_playlist.keys())[selected_index]
+                #requests.post(RESPOT_BASE_URL + '/player/load',{'uri':track_urn})
+                requests.post(RESPOT_BASE_URL + '/player/addToQueue',{'uri':track_urn})
+                active_playlist = long_operation_result(update_list)
+                #window['current_playlist_name'].update(cache[playlist_urn]['title'])
+                window['current_queue'].update(active_playlist.values())
+                requests.post(RESPOT_BASE_URL + '/player/next')
+                requests.post(RESPOT_BASE_URL + '/player/resume')
+
+        elif event == 'remove_tab':
+            tab_playlist_urn = list(tab_playlists.keys())[selected_tab_index]
+            del tab_playlists[tab_playlist_urn]
+            del cache[tab_playlist_urn]
+            window['right_tab_group'].Widget.forget(selected_tab_index)
+            window['tabs_list'].update(tab_playlists.values())
         elif event == sg.WIN_CLOSED or event == 'dismiss': # if user closes window or clicks cancel
             timerthread.end()
             break
+
         else:
-            logging.debug(event,'=>',values)
+            logging.debug([str(event) , ' =>', str(values)])
 
     pickle.dump(cache,open(file_curdir + '/cache.pickle','wb'))
     window.close()
