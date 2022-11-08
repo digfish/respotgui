@@ -1,3 +1,7 @@
+- updated screenshot
+- Tabs are now restored at start
+- Implemented playlists in tabs
+- Added buttons for change the repeat and shuffle.
 - Changed font to Verdana and implemented buttons
 - Search results in a tree, cleaned code
 - Now listens to presses on media keys
