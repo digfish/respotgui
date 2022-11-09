@@ -54,7 +54,7 @@ if __name__ == '__main__':
         long_description=long_description,
         long_description_content_type='text/markdown',
         license="Apache License 2.0",
-        url="https://github.com/digfish/respogui",
+        url="https://github.com/digfish/respotgui",
         packages=setuptools.find_packages(),
         classifiers=[
             "Development Status :: 2 - Pre-Alpha",

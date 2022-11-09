@@ -31,7 +31,6 @@ import dotenv
 from pycaw.pycaw import AudioUtilities
 import pynput
 import logging
-import about
 
 
 APP_NAME = "ReSpotGUI"
